@@ -24,12 +24,16 @@ The following configuration template shows how to set up the haversine component
   "sensor_1": {
     "name": "<sensor_name>",
     "latitude": "<path.to.latitude>",
-    "longitude": "<path.to.longitude>"
+    "longitude": "<path.to.longitude>",
+    "updated": "<path.to.timestamp>",
+    "expire": "<duration>"
   },
   "sensor_2": {
     "name": "<sensor_name>",
     "latitude": "<path.to.latitude>",
-    "longitude": "<path.to.longitude>"
+    "longitude": "<path.to.longitude>",
+    "updated": "<path.to.timestamp>",
+    "expire": "<duration>"
   }
 }
 ```
@@ -50,6 +54,12 @@ Each sensor configuration requires:
 - `latitude`: JSON path to the latitude value in the sensor's readings
 - `longitude`: JSON path to the longitude value in the sensor's readings
 
+Each sensor configuration optionally supports:
+- `updated`: JSON path to an ISO8601 timestamp field (e.g., "2023-12-01T10:30:00Z")
+- `expire`: Duration string after which the reading is considered stale (e.g., "1d", "12h", "10m", "30s", "100ms")
+
+If both `updated` and `expire` are specified for a sensor, the reading will be considered invalid and no distance will be calculated if the timestamp is older than the expire duration.
+
 #### Example Configuration
 
 ```json
@@ -57,12 +67,16 @@ Each sensor configuration requires:
   "sensor_1": {
     "name": "gps1",
     "latitude": "position.lat",
-    "longitude": "position.lng"
+    "longitude": "position.lng",
+    "updated": "timestamp",
+    "expire": "5m"
   },
   "sensor_2": {
     "name": "phone_data",
     "latitude": "loc.latitude",
-    "longitude": "loc.longitude"
+    "longitude": "loc.longitude",
+    "updated": "last_updated",
+    "expire": "1h"
   }
 }
 ```
@@ -71,13 +85,15 @@ Each sensor configuration requires:
 
 #### get_readings()
 
-Returns the distance between the two configured sensor readings. The method will:
+Returns the distance between the two configured sensors. The method will:
 1. Return an empty object ({}) if both sensors are not configured
-2. Get readings from both configured sensors
-3. Extract latitude and longitude using the configured paths
-4. Calculate distances in multiple units
+2. Check if sensor readings are still valid (if updated/expire fields are configured)
+3. Return an empty object ({}) if any sensor reading has expired
+4. Get readings from both configured sensors
+5. Extract latitude and longitude using the configured paths
+6. Calculate distances in multiple units
 
-Example response when sensors are configured:
+Example response when sensors are configured and readings are valid:
 ```json
 {
   "distance_km": 392.21,
@@ -113,4 +129,24 @@ Example command:
 ```
 
 The response format is identical to get_readings().
+
+### Dependencies
+
+This component requires:
+- Python 3.5 or later
+- haversine package (version 2.9.0)
+- viam-sdk
+
+### Error Handling
+
+The component will:
+- Return an empty object from get_readings() if both sensors are not configured
+- Return an empty object from get_readings() if any sensor reading has expired
+- Log a warning during startup if sensors are configured but not found
+- Log a warning if sensor readings have expired
+- Raise errors if:
+  - Sensor configuration is provided but missing required fields
+  - Invalid coordinates are provided to do_command()
+  - Sensor readings don't contain the expected data at the configured paths
+  - Invalid duration format is provided in expire field
 

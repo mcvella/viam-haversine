@@ -1,5 +1,7 @@
 from typing import (Any, ClassVar, Dict, Final, List, Mapping, Optional,
                     Sequence, Tuple, cast)
+import re
+from datetime import datetime, timedelta
 
 from typing_extensions import Self
 from viam.components.sensor import *
@@ -21,8 +23,69 @@ class Haversine(Sensor, EasyResource):
         self.sensor_2 = None
         self.sensor1_lat_path = None
         self.sensor1_lng_path = None
+        self.sensor1_updated_path = None
+        self.sensor1_expire = None
         self.sensor2_lat_path = None
         self.sensor2_lng_path = None
+        self.sensor2_updated_path = None
+        self.sensor2_expire = None
+
+    def _parse_duration(self, duration_str: str) -> timedelta:
+        """Parse duration string like '1d', '12h', '10m', '30s', '100ms' into timedelta.
+        
+        Args:
+            duration_str: Duration string in format like '1d', '12h', '10m', '30s', '100ms'
+            
+        Returns:
+            timedelta: The parsed duration
+            
+        Raises:
+            ValueError: If duration format is invalid
+        """
+        pattern = r'^(\d+)(d|h|m|s|ms)$'
+        match = re.match(pattern, duration_str)
+        if not match:
+            raise ValueError(f"Invalid duration format: {duration_str}. Expected format like '1d', '12h', '10m', '30s', '100ms'")
+        
+        value = int(match.group(1))
+        unit = match.group(2)
+        
+        if unit == 'd':
+            return timedelta(days=value)
+        elif unit == 'h':
+            return timedelta(hours=value)
+        elif unit == 'm':
+            return timedelta(minutes=value)
+        elif unit == 's':
+            return timedelta(seconds=value)
+        elif unit == 'ms':
+            return timedelta(milliseconds=value)
+        else:
+            raise ValueError(f"Unknown duration unit: {unit}")
+
+    def _is_reading_valid(self, reading: Dict, updated_path: Optional[List[str]], expire_duration: Optional[timedelta]) -> bool:
+        """Check if a sensor reading is still valid based on updated timestamp and expire duration.
+        
+        Args:
+            reading: The sensor reading dictionary
+            updated_path: Path to the updated timestamp field
+            expire_duration: Duration after which the reading expires
+            
+        Returns:
+            bool: True if reading is valid, False otherwise
+        """
+        if updated_path is None or expire_duration is None:
+            return True
+            
+        try:
+            updated_str = self._get_nested_value(reading, updated_path, return_str=True)
+            updated_time = datetime.fromisoformat(updated_str.replace('Z', '+00:00'))
+            now = datetime.now(updated_time.tzinfo) if updated_time.tzinfo else datetime.now()
+            
+            return (now - updated_time) <= expire_duration
+        except Exception as e:
+            self.logger.warn(f"Error checking reading validity: {str(e)}")
+            return False
 
     @classmethod
     def new(
@@ -63,8 +126,12 @@ class Haversine(Sensor, EasyResource):
         self.sensor_2 = None
         self.sensor1_lat_path = None
         self.sensor1_lng_path = None
+        self.sensor1_updated_path = None
+        self.sensor1_expire = None
         self.sensor2_lat_path = None
         self.sensor2_lng_path = None
+        self.sensor2_updated_path = None
+        self.sensor2_expire = None
 
         if "sensor_1" in attributes:
             sensor1 = attributes["sensor_1"]
@@ -73,6 +140,11 @@ class Haversine(Sensor, EasyResource):
                 self.sensor_1 = cast(Sensor, dependencies[sensor_name])
                 self.sensor1_lat_path = str(sensor1["latitude"]).split(".")
                 self.sensor1_lng_path = str(sensor1["longitude"]).split(".")
+                
+                if "updated" in sensor1:
+                    self.sensor1_updated_path = str(sensor1["updated"]).split(".")
+                if "expire" in sensor1:
+                    self.sensor1_expire = self._parse_duration(str(sensor1["expire"]))
             else:
                 self.logger.warn(f"Configured sensor_1 '{sensor1['name']}' not found in dependencies")
 
@@ -83,21 +155,27 @@ class Haversine(Sensor, EasyResource):
                 self.sensor_2 = cast(Sensor, dependencies[sensor_name])
                 self.sensor2_lat_path = str(sensor2["latitude"]).split(".")
                 self.sensor2_lng_path = str(sensor2["longitude"]).split(".")
+                
+                if "updated" in sensor2:
+                    self.sensor2_updated_path = str(sensor2["updated"]).split(".")
+                if "expire" in sensor2:
+                    self.sensor2_expire = self._parse_duration(str(sensor2["expire"]))
             else:
                 self.logger.warn(f"Configured sensor_2 '{sensor2['name']}' not found in dependencies")
 
         if not all([self.sensor_1, self.sensor_2]):
             self.logger.warn("One or both sensors not configured - get_readings() will return empty results. Only do_command() will be fully functional.")
 
-    def _get_nested_value(self, data: Dict, path: List[str]) -> float:
+    def _get_nested_value(self, data: Dict, path: List[str], return_str: bool = False) -> Any:
         """Helper function to get nested dictionary values using a path.
         
         Args:
             data: Dictionary containing sensor readings
             path: List of keys to traverse to find the value
+            return_str: If True, return the raw value as string instead of converting to float
             
         Returns:
-            float: The extracted coordinate value
+            float or str: The extracted value
             
         Raises:
             Exception: If the path is invalid or value cannot be converted to float
@@ -113,6 +191,9 @@ class Haversine(Sensor, EasyResource):
         # Handle case where value might be in a 'value' field
         if isinstance(current, dict) and "value" in current:
             current = current["value"]
+            
+        if return_str:
+            return str(current)
             
         try:
             return float(current)
@@ -160,6 +241,15 @@ class Haversine(Sensor, EasyResource):
         self.logger.debug(f"Sensor 2 paths - lat: {'.'.join(self.sensor2_lat_path)}, lng: {'.'.join(self.sensor2_lng_path)}")
 
         try:
+            # Check if readings are still valid
+            if not self._is_reading_valid(readings1, self.sensor1_updated_path, self.sensor1_expire):
+                self.logger.warn("Sensor 1 reading has expired")
+                return {}
+                
+            if not self._is_reading_valid(readings2, self.sensor2_updated_path, self.sensor2_expire):
+                self.logger.warn("Sensor 2 reading has expired")
+                return {}
+
             # Extract coordinates using the configured paths
             lat1 = self._get_nested_value(readings1, self.sensor1_lat_path)
             lng1 = self._get_nested_value(readings1, self.sensor1_lng_path)
