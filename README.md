@@ -15,6 +15,10 @@ The distances are provided in three units:
 
 This model implements a sensor component that calculates the great-circle distance between two points on a sphere using the haversine formula.
 
+### Supported Sensor Types
+
+This component supports both **Sensor** and **MovementSensor** components as data sources. The component will automatically detect the type of each configured sensor and cast it appropriately. Both sensor types provide a `get_readings()` method that returns the same data format, so they work seamlessly with this component.
+
 ### Configuration
 
 The following configuration template shows how to set up the haversine component:
@@ -44,13 +48,13 @@ The following attributes are optional for this model:
 
 | Name | Type | Inclusion | Description |
 |------|------|-----------|-------------|
-| `sensor_1` | object | Optional | Configuration for the first location sensor |
-| `sensor_2` | object | Optional | Configuration for the second location sensor |
+| `sensor_1` | object | Optional | Configuration for the first location sensor (Sensor or MovementSensor) |
+| `sensor_2` | object | Optional | Configuration for the second location sensor (Sensor or MovementSensor) |
 
 If you don't configure both sensors, only the `do_command()` method will be fully functional. `get_readings()` will return an empty object if both sensors are not configured.
 
 Each sensor configuration requires:
-- `name`: The name of the sensor component
+- `name`: The name of the sensor component (can be either Sensor or MovementSensor)
 - `latitude`: JSON path to the latitude value in the sensor's readings
 - `longitude`: JSON path to the longitude value in the sensor's readings
 
@@ -81,6 +85,12 @@ If both `updated` and `expire` are specified for a sensor, the reading will be c
 }
 ```
 
+In this example:
+- `gps1` could be a MovementSensor (like a GPS module)
+- `phone_data` could be a regular Sensor (like a data source from a phone app)
+
+The component will automatically detect and handle both types correctly.
+
 ### Methods
 
 #### get_readings()
@@ -89,7 +99,7 @@ Returns the distance between the two configured sensors. The method will:
 1. Return an empty object ({}) if both sensors are not configured
 2. Check if sensor readings are still valid (if updated/expire fields are configured)
 3. Return an empty object ({}) if any sensor reading has expired
-4. Get readings from both configured sensors
+4. Get readings from both configured sensors (works with both Sensor and MovementSensor)
 5. Extract latitude and longitude using the configured paths
 6. Calculate distances in multiple units
 
@@ -144,9 +154,11 @@ The component will:
 - Return an empty object from get_readings() if any sensor reading has expired
 - Log a warning during startup if sensors are configured but not found
 - Log a warning if sensor readings have expired
+- Log info messages showing which type of sensor (Sensor or MovementSensor) was detected
 - Raise errors if:
   - Sensor configuration is provided but missing required fields
   - Invalid coordinates are provided to do_command()
   - Sensor readings don't contain the expected data at the configured paths
   - Invalid duration format is provided in expire field
+  - A component is neither Sensor nor MovementSensor
 

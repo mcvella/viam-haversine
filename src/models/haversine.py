@@ -1,10 +1,11 @@
 from typing import (Any, ClassVar, Dict, Final, List, Mapping, Optional,
-                    Sequence, Tuple, cast)
+                    Sequence, Tuple, cast, Union)
 import re
 from datetime import datetime, timedelta
 
 from typing_extensions import Self
 from viam.components.sensor import *
+from viam.components.movement_sensor import MovementSensor
 from viam.proto.app.robot import ComponentConfig
 from viam.proto.common import Geometry, ResourceName
 from viam.resource.base import ResourceBase
@@ -29,6 +30,22 @@ class Haversine(Sensor, EasyResource):
         self.sensor2_lng_path = None
         self.sensor2_updated_path = None
         self.sensor2_expire = None
+
+    def _get_component_type(self, component: ResourceBase) -> str:
+        """Determine if a component is a Sensor or MovementSensor.
+        
+        Args:
+            component: The component to check
+            
+        Returns:
+            str: Either 'sensor' or 'movement_sensor'
+        """
+        if isinstance(component, MovementSensor):
+            return 'movement_sensor'
+        elif isinstance(component, Sensor):
+            return 'sensor'
+        else:
+            raise Exception(f"Component must be either Sensor or MovementSensor, got {type(component)}")
 
     def _parse_duration(self, duration_str: str) -> timedelta:
         """Parse duration string like '1d', '12h', '10m', '30s', '100ms' into timedelta.
@@ -116,6 +133,32 @@ class Haversine(Sensor, EasyResource):
 
         return [], optional_deps
 
+    def _find_component(self, name: str, dependencies: Mapping[ResourceName, ResourceBase]) -> Optional[Tuple[ResourceBase, str]]:
+        """Find a component by name, trying both Sensor and MovementSensor resource types.
+        
+        Args:
+            name: The component name
+            dependencies: Available dependencies
+            
+        Returns:
+            Tuple of (component, component_type) if found, None otherwise
+        """
+        # Try Sensor first
+        sensor_name = Sensor.get_resource_name(name)
+        if sensor_name in dependencies:
+            component = dependencies[sensor_name]
+            component_type = self._get_component_type(component)
+            return component, component_type
+            
+        # Try MovementSensor
+        movement_sensor_name = MovementSensor.get_resource_name(name)
+        if movement_sensor_name in dependencies:
+            component = dependencies[movement_sensor_name]
+            component_type = self._get_component_type(component)
+            return component, component_type
+            
+        return None
+
     def reconfigure(
         self, config: ComponentConfig, dependencies: Mapping[ResourceName, ResourceBase]
     ):
@@ -135,9 +178,16 @@ class Haversine(Sensor, EasyResource):
 
         if "sensor_1" in attributes:
             sensor1 = attributes["sensor_1"]
-            sensor_name = Sensor.get_resource_name(str(sensor1["name"]))
-            if sensor_name in dependencies:
-                self.sensor_1 = cast(Sensor, dependencies[sensor_name])
+            result = self._find_component(str(sensor1["name"]), dependencies)
+            if result:
+                component, component_type = result
+                self.logger.info(f"Configuring sensor_1 as {component_type}")
+                
+                if component_type == 'movement_sensor':
+                    self.sensor_1 = cast(MovementSensor, component)
+                else:
+                    self.sensor_1 = cast(Sensor, component)
+                    
                 self.sensor1_lat_path = str(sensor1["latitude"]).split(".")
                 self.sensor1_lng_path = str(sensor1["longitude"]).split(".")
                 
@@ -146,13 +196,20 @@ class Haversine(Sensor, EasyResource):
                 if "expire" in sensor1:
                     self.sensor1_expire = self._parse_duration(str(sensor1["expire"]))
             else:
-                self.logger.warn(f"Configured sensor_1 '{sensor1['name']}' not found in dependencies")
+                self.logger.warn(f"Configured sensor_1 '{sensor1['name']}' not found in dependencies (tried both Sensor and MovementSensor)")
 
         if "sensor_2" in attributes:
             sensor2 = attributes["sensor_2"]
-            sensor_name = Sensor.get_resource_name(str(sensor2["name"]))
-            if sensor_name in dependencies:
-                self.sensor_2 = cast(Sensor, dependencies[sensor_name])
+            result = self._find_component(str(sensor2["name"]), dependencies)
+            if result:
+                component, component_type = result
+                self.logger.info(f"Configuring sensor_2 as {component_type}")
+                
+                if component_type == 'movement_sensor':
+                    self.sensor_2 = cast(MovementSensor, component)
+                else:
+                    self.sensor_2 = cast(Sensor, component)
+                    
                 self.sensor2_lat_path = str(sensor2["latitude"]).split(".")
                 self.sensor2_lng_path = str(sensor2["longitude"]).split(".")
                 
@@ -161,7 +218,7 @@ class Haversine(Sensor, EasyResource):
                 if "expire" in sensor2:
                     self.sensor2_expire = self._parse_duration(str(sensor2["expire"]))
             else:
-                self.logger.warn(f"Configured sensor_2 '{sensor2['name']}' not found in dependencies")
+                self.logger.warn(f"Configured sensor_2 '{sensor2['name']}' not found in dependencies (tried both Sensor and MovementSensor)")
 
         if not all([self.sensor_1, self.sensor_2]):
             self.logger.warn("One or both sensors not configured - get_readings() will return empty results. Only do_command() will be fully functional.")
@@ -180,17 +237,28 @@ class Haversine(Sensor, EasyResource):
         Raises:
             Exception: If the path is invalid or value cannot be converted to float
         """
+        self.logger.debug(f"Getting nested value for path {'.'.join(path)} from data: {data}")
+        
         current = data
-        for key in path:
+        for i, key in enumerate(path):
+            self.logger.debug(f"Step {i}: accessing key '{key}' from current: {current} (type: {type(current)})")
+            
             if not isinstance(current, dict):
-                raise Exception(f"Cannot access '{key}' in path {'.'.join(path)}, parent is not a dictionary: {current}")
-            if key not in current:
-                raise Exception(f"Key '{key}' not found in path {'.'.join(path)}")
-            current = current[key]
+                # Handle special Viam objects like GeoPoint
+                if hasattr(current, key):
+                    current = getattr(current, key)
+                else:
+                    raise Exception(f"Cannot access '{key}' in path {'.'.join(path)}, parent is not a dictionary and has no attribute '{key}': {current}")
+            else:
+                if key not in current:
+                    raise Exception(f"Key '{key}' not found in path {'.'.join(path)}")
+                current = current[key]
             
         # Handle case where value might be in a 'value' field
         if isinstance(current, dict) and "value" in current:
             current = current["value"]
+            
+        self.logger.debug(f"Final value: {current} (type: {type(current)})")
             
         if return_str:
             return str(current)
