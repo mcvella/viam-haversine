@@ -2,7 +2,7 @@
   "$schema": "https://dl.viam.dev/module.schema.json",
   "module_id": "mcvella:haversine",
   "visibility": "public",
-  "url": "https://github.com/mcvella/viam-haversine",
+  "url": "https://github.com/viam-soleng/viam-haversine",
   "description": "Modular sensor component: haversine",
   "models": [
     {
