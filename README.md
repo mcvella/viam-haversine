@@ -11,7 +11,7 @@ The distances are provided in three units:
 - Miles
 - Nautical Miles
 
-## Model mcvella:haversine:haversine
+## Model viam-soleng:haversine:haversine
 
 This model implements a sensor component that calculates the great-circle distance between two points on a sphere using the haversine formula.
 

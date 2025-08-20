@@ -1,13 +1,13 @@
 {
   "$schema": "https://dl.viam.dev/module.schema.json",
-  "module_id": "mcvella:haversine",
+  "module_id": "viam-soleng:haversine",
   "visibility": "public",
   "url": "https://github.com/viam-soleng/viam-haversine",
   "description": "Modular sensor component: haversine",
   "models": [
     {
       "api": "rdk:component:sensor",
-      "model": "mcvella:haversine:haversine",
+      "model": "viam-soleng:haversine:haversine",
       "short_description": "Calculate the distance between two points on Earth using their latitude and longitude.",
       "markdown_link": "README.md#model-mcvellahaversinehaversine"
     }

@@ -16,7 +16,7 @@ from haversine import haversine, Unit
 
 
 class Haversine(Sensor, EasyResource):
-    MODEL: ClassVar[Model] = Model(ModelFamily("mcvella", "haversine"), "haversine")
+    MODEL: ClassVar[Model] = Model(ModelFamily("viam-soleng", "haversine"), "haversine")
 
     def __init__(self, name: str):
         super().__init__(name)
